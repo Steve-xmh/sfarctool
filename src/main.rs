@@ -3,6 +3,7 @@ mod lzss;
 use std::{
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
+    path::PathBuf, task::Context,
 };
 
 use byteorder::*;
@@ -23,7 +24,10 @@ fn print_data(data: &[u8]) {
 
 fn main() {
     let args = zigarg::Arguments::new();
-    println!("Star Force Archive Tool (Rust) v1.0 by SteveXMH (Original by Prof.9)");
+    let slience = args.exist("-s");
+    if !slience {
+        println!("Star Force Archive Tool (Rust) v1.0 by SteveXMH (Original by Prof.9)");
+    }
     if !args.has_args() {
         println!();
         println!("Usage:  sfarctool.exe <options>");
@@ -34,9 +38,15 @@ fn main() {
         println!("        -p              Packs folder to archive. Requires -i and -o.");
         println!("        -eof            Indicates the archive has an EOF subfile entry. Requires -x or -p.");
         println!("        -c              Compress sub files if can be smaller. Requires -p.");
+        println!("        --ignore-zero   Skip zero sized sub files when unpacking or add zero size sub files on missing index file when packing. Requires -x or -p.");
+        println!("        -s              Slience mode. No output.");
         println!("        -v              Toggle verbose mode which will output a lot of message.");
         println!();
-        println!("For option -p, subfiles in the input directory must be named as \"XXX.ext\" or \"name_XXX.ext\", where \"name\" is an arbitrary string not containing '.' or '_', \"XXX\" is the subfile number and \"ext\" is any extension (multiple extensions are allowed. Any files that do not adhere to this format will be skipped.");
+        println!("For option -p, subfiles in the input directory must be named as \"XXX.ext\" or \"name_XXX.ext\", \
+                    where \"name\" is an arbitrary string not containing '.' or '_', \
+                    \"XXX\" is the subfile number and \"ext\" is any extension \
+                    (multiple extensions are allowed. \
+                    Any files that do not adhere to this format will be skipped or be writen as zero size sub file when using --ignore-zero option.");
         return;
     }
     let input = args
@@ -52,6 +62,7 @@ fn main() {
     let eof = args.exist("-eof");
     let compress = args.exist("-c");
     let verbose = args.exist("-v");
+    let ignore_zero = args.exist("--ignore-zero");
     if (unpack && pack) || (!unpack && !pack) {
         println!("Error: Both set pack and unpack mode.");
         return;
@@ -147,6 +158,10 @@ fn main() {
             {
                 continue;
             }
+            if ignore_zero && subfile.size == 0 {
+                println!("Warning: Entry {} is empty, skipped.", i);
+                continue;
+            }
             let output_name = format!("{}_{}.bin", output_basename, to_padded_string(i as _));
             let mut output = std::path::PathBuf::from(&output);
             output.push(output_name);
@@ -169,7 +184,7 @@ fn main() {
                     .expect("Can't write subfile");
             } else {
                 if verbose {
-                    println!("Unpacking entry {}", i);
+                    println!("Unpacking entry {} with size {}", i, subfile.size);
                 }
                 file.read_exact(&mut buf[..subfile.size as usize])
                     .expect("Can't read file");
@@ -196,6 +211,36 @@ fn main() {
             }
         }
         files.sort_by(|a, b| a.0.cmp(&b.0));
+        if !files.is_empty() {
+            let max_index = files.last().and_then(|x| Some(x.0)).unwrap();
+            let mut i = 0;
+            if files.len() < max_index + 1 && ignore_zero {
+                while files.len() < max_index + 1 {
+                    let file = &files[i];
+                    if i != file.0 {
+                        files.insert(i, (i, PathBuf::default()));
+                        if !slience {
+                            println!("Warning: Missing file {}, using zero size file", i);
+                        }
+                    }
+                    i += 1;
+                }
+            } else {
+                println!(
+                    "Incorrect subfile amount, expecting {} files but got {} subfiles",
+                    max_index,
+                    files.len()
+                );
+                println!("List of missing sub files:");
+                for i in 0..max_index + 1 {
+                    if files.iter().find(|x| x.0 == i).is_none() {
+                        println!("Missing sub file {}", i);
+                    }
+                }
+                println!("Tip: If it's not an error, use --ignore-zero to ignore missing files and write zero size sub file.");
+                return;
+            }
+        }
         let header_size = if eof {
             (files.len() + 2) * 8
         } else {
@@ -216,33 +261,44 @@ fn main() {
         let files = files
             .into_iter()
             .map(|(i, entry)| {
-                let mut subfile = OpenOptions::new()
-                    .read(true)
-                    .open(&entry)
-                    .expect("Can't open subfile");
-                buf.clear();
-                subfile.read_to_end(&mut buf).expect("Can't read subfile");
-                let uncompressed_size = buf.len();
-                if compress {
-                    if let Ok(compressed_data) = lzss::compress_arr(&buf) {
-                        if uncompressed_size <= compressed_data.len() {
-                            file_size += uncompressed_size;
-                            (false, buf.to_owned(), uncompressed_size)
+                if entry == PathBuf::default() {
+                    (false, vec![], 0)
+                } else {
+                    let mut subfile = OpenOptions::new()
+                        .read(true)
+                        .open(&entry)
+                        .expect("Can't open subfile");
+                    buf.clear();
+                    subfile.read_to_end(&mut buf).expect("Can't read subfile");
+                    let uncompressed_size = buf.len();
+                    if compress {
+                        if let Ok(compressed_data) = lzss::compress_arr(&buf) {
+                            if uncompressed_size <= compressed_data.len() {
+                                file_size += uncompressed_size;
+                                (false, buf.to_owned(), uncompressed_size)
+                            } else {
+                                file_size += compressed_data.len();
+                                (true, compressed_data, uncompressed_size)
+                            }
                         } else {
-                            file_size += compressed_data.len();
-                            (true, compressed_data, uncompressed_size)
+                            (false, buf.to_owned(), uncompressed_size)
                         }
                     } else {
                         (false, buf.to_owned(), uncompressed_size)
                     }
-                } else {
-                    (false, buf.to_owned(), uncompressed_size)
                 }
             })
             .collect::<Vec<_>>();
         file.seek(SeekFrom::Start(0))
             .expect("Can't seek file to start");
         for (compressed, data, uncompressed_size) in &files {
+            if verbose {
+                println!(
+                    "Subfile {} bytes -> {} bytes",
+                    data.len(),
+                    uncompressed_size
+                );
+            }
             file.write_u32::<LE>(offset)
                 .expect("Can't write file size at end of entries");
             file.write_u32::<LE>(
