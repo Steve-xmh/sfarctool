@@ -3,7 +3,7 @@ mod lzss;
 use std::{
     fs::OpenOptions,
     io::{Read, Seek, SeekFrom, Write},
-    path::PathBuf, task::Context,
+    path::PathBuf,
 };
 
 use byteorder::*;
@@ -13,13 +13,6 @@ struct SubFile {
     offset: u32,
     size: u32,
     compressed: bool,
-}
-
-fn print_data(data: &[u8]) {
-    for b in data {
-        print!("{:02X}", b);
-    }
-    println!();
 }
 
 fn main() {
@@ -124,6 +117,7 @@ fn main() {
             subfiles.pop();
         }
         let subfile_len = subfiles.len() - 1;
+        let zero_subfile_amounts = subfiles.iter().filter(|x| x.size == 0).count();
         let output_basename = {
             if let Some(sep) = input.as_str().rfind(['/', '\\']) {
                 if let Some(dot) = input.as_str().rfind('.') {
@@ -160,6 +154,10 @@ fn main() {
             }
             if ignore_zero && subfile.size == 0 {
                 println!("Warning: Entry {} is empty, skipped.", i);
+                if i == subfile_len - 1 {
+                    println!("Tip: It seems like there is a zero-sized subfile at the end of the archive, maybe it is a end-of-file mark.");
+                    println!("     If you think that so, you can use -eof option to skip writing this subfile.");
+                }
                 continue;
             }
             let output_name = format!("{}_{}.bin", output_basename, to_padded_string(i as _));
@@ -193,6 +191,19 @@ fn main() {
                     .expect("Can't write subfile");
             }
         }
+        if zero_subfile_amounts > 0 {
+            println!(
+                "Tip: There {} zero-sized subfile{} in the archive.",
+                if zero_subfile_amounts > 1 {
+                    "are some"
+                } else {
+                    "is a"
+                },
+                if zero_subfile_amounts > 1 { "s" } else { "" }
+            );
+            println!("     If you are using tools like TextPet, it may come to an error when reading text archive.");
+            println!("     To ignore zero file writing, use --ignore-zero option to skip writing zero files.");
+        }
     } else if pack {
         // Parse files and sort them.
         let mut input_dir = std::fs::read_dir(&input).expect("Can't read input directory");
@@ -212,9 +223,9 @@ fn main() {
         }
         files.sort_by(|a, b| a.0.cmp(&b.0));
         if !files.is_empty() {
-            let max_index = files.last().and_then(|x| Some(x.0)).unwrap();
+            let max_index = files.last().map(|x| x.0).unwrap();
             let mut i = 0;
-            if files.len() < max_index + 1 && ignore_zero {
+            if files.len() < max_index + 1 || ignore_zero {
                 while files.len() < max_index + 1 {
                     let file = &files[i];
                     if i != file.0 {
@@ -228,12 +239,12 @@ fn main() {
             } else {
                 println!(
                     "Incorrect subfile amount, expecting {} files but got {} subfiles",
-                    max_index,
+                    max_index + 1,
                     files.len()
                 );
                 println!("List of missing sub files:");
                 for i in 0..max_index + 1 {
-                    if files.iter().find(|x| x.0 == i).is_none() {
+                    if !files.iter().any(|x| x.0 == i) {
                         println!("Missing sub file {}", i);
                     }
                 }
@@ -260,7 +271,7 @@ fn main() {
         let mut buf = Vec::new();
         let files = files
             .into_iter()
-            .map(|(i, entry)| {
+            .map(|(_i, entry)| {
                 if entry == PathBuf::default() {
                     (false, vec![], 0)
                 } else {

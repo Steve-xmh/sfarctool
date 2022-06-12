@@ -11,8 +11,6 @@ use std::{
 use byteorder::*;
 use itertools::Itertools;
 
-use crate::print_data;
-
 #[derive(Debug)]
 struct DefaultMap<K, V>(HashMap<K, V>);
 
@@ -233,7 +231,6 @@ pub fn compress_nlz10(input: &[u8], output: &mut impl Write) -> Result<(), Box<d
                     let sh = (((count << 12) | disp.abs() as u32) & 0xFFFF) as u16;
                     output.write_u16::<BE>(sh)?;
                     length += 2;
-                    
                 }
                 CompressChunkType::Data(data) => {
                     output.write_u8(data)?;
