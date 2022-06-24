@@ -1,4 +1,5 @@
 mod lzss;
+mod nlz;
 
 use std::{
     fs::OpenOptions,
@@ -175,8 +176,7 @@ fn main() {
                 if verbose {
                     println!("Decompressing entry {}", i);
                 }
-                let decompressed =
-                    nintendo_lz::decompress(&mut file).expect("Can't decompress file");
+                let decompressed = nlz::decompress(&mut file).expect("Can't decompress file");
                 output
                     .write_all(&decompressed)
                     .expect("Can't write subfile");

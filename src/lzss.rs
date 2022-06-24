@@ -52,7 +52,7 @@ pub struct CompressWindow<'a, const LEN: u32, const MIN: u32, const MAX: u32> {
 }
 
 pub type NLZ10Window<'a> = CompressWindow<'a, 4096, 3, { 3 + 0xF }>;
-pub type NLZ11Window<'a> = CompressWindow<'a, 4096, 3, { 0x111 + 0xFFFF }>;
+// pub type NLZ11Window<'a> = CompressWindow<'a, 4096, 3, { 0x111 + 0xFFFF }>;
 
 impl<'a, const LEN: u32, const MIN: u32, const MAX: u32> CompressWindow<'a, LEN, MIN, MAX> {
     fn new(input: &'a [u8]) -> Self {
@@ -79,7 +79,7 @@ impl<'a, const LEN: u32, const MIN: u32, const MAX: u32> CompressWindow<'a, LEN,
         }
         if self.full {
             let olditem = self.input[self.start as usize] as _;
-            debug_assert!(self.hash.get(&olditem).get(0) == Some(&self.start));
+            debug_assert!(self.hash.get(&olditem).first() == Some(&self.start));
             self.hash.get_mut(&olditem).remove(0);
         }
         let item = self.input[self.stop as usize] as u32;
@@ -228,7 +228,7 @@ pub fn compress_nlz10(input: &[u8], output: &mut impl Write) -> Result<(), Box<d
                     let disp = (-disp) - 1;
                     assert!(0 <= disp);
                     assert!(disp < 4096);
-                    let sh = (((count << 12) | disp.abs() as u32) & 0xFFFF) as u16;
+                    let sh = (((count << 12) | disp.unsigned_abs()) & 0xFFFF) as u16;
                     output.write_u16::<BE>(sh)?;
                     length += 2;
                 }
@@ -246,70 +246,71 @@ pub fn compress_nlz10(input: &[u8], output: &mut impl Write) -> Result<(), Box<d
 
     Ok(())
 }
-pub fn compress_nlz11(input: &[u8], output: &mut impl Write) -> Result<(), Box<dyn Error>> {
-    output.write_u32::<LE>(((input.len() as u32) << 8) + 0x11)?;
-    let mut length = 0;
 
-    let window = NLZ11Window::new(input);
-    for c in &Compressor::new(window).chunks(8) {
-        let c = c.collect_vec();
-        let mut flag = 0u8;
-        let mut flagit = c
-            .iter()
-            .map(|x| matches!(x, CompressChunkType::Replace(_, _)));
-        for _ in 0..8 {
-            flag <<= 1;
-            if let Some(c) = flagit.next() {
-                if c {
-                    flag |= 1;
-                }
-            }
-        }
-        output.write_u8(flag)?;
-        length += 1;
-        for c in c {
-            match c {
-                CompressChunkType::Replace(mut count, disp) => {
-                    let disp = (-disp) - 1;
-                    debug_assert!((0..=0xFFF).contains(&disp));
-                    if count <= 1 + 0xF {
-                        count -= 1;
-                        debug_assert!((2..=0xF).contains(&count));
-                        let sh = ((count << 12) & 0xFFFF) as u16 | (disp.abs() & 0xFFFF) as u16;
-                        output.write_u16::<BE>(sh)?;
-                        length += 2;
-                    } else if count <= 0x11 + 0xFF {
-                        count -= 0x11;
-                        debug_assert!((0..=0xFF).contains(&count));
-                        let b = (count >> 4 & 0xFF) as u8;
-                        let sh = ((count & 0xF) << 12) as u16 | disp.abs() as u16;
-                        output.write_u8(b)?;
-                        output.write_u16::<BE>(sh)?;
-                        length += 3;
-                    } else if count <= 0x111 + 0xFFFF {
-                        count -= 0x111;
-                        debug_assert!((0..=0xFFFF).contains(&count));
-                        let l = (1 << 28) | (count << 12) | disp.abs() as u32;
-                        output.write_u32::<BE>(l as _)?;
-                        length += 4;
-                    } else {
-                        panic!();
-                    }
-                }
-                CompressChunkType::Data(data) => {
-                    output.write_u8(data)?;
-                    length += 1;
-                }
-            }
-        }
-    }
-    let padding = if length % 4 == 0 { 0 } else { 4 - length % 4 };
-    for _ in 0..padding {
-        output.write_u8(0xFF)?;
-    }
+// pub fn compress_nlz11(input: &[u8], output: &mut impl Write) -> Result<(), Box<dyn Error>> {
+//     output.write_u32::<LE>(((input.len() as u32) << 8) + 0x11)?;
+//     let mut length = 0;
 
-    Ok(())
-}
+//     let window = NLZ11Window::new(input);
+//     for c in &Compressor::new(window).chunks(8) {
+//         let c = c.collect_vec();
+//         let mut flag = 0u8;
+//         let mut flagit = c
+//             .iter()
+//             .map(|x| matches!(x, CompressChunkType::Replace(_, _)));
+//         for _ in 0..8 {
+//             flag <<= 1;
+//             if let Some(c) = flagit.next() {
+//                 if c {
+//                     flag |= 1;
+//                 }
+//             }
+//         }
+//         output.write_u8(flag)?;
+//         length += 1;
+//         for c in c {
+//             match c {
+//                 CompressChunkType::Replace(mut count, disp) => {
+//                     let disp = (-disp) - 1;
+//                     debug_assert!((0..=0xFFF).contains(&disp));
+//                     if count <= 1 + 0xF {
+//                         count -= 1;
+//                         debug_assert!((2..=0xF).contains(&count));
+//                         let sh = ((count << 12) & 0xFFFF) as u16 | (disp.abs() & 0xFFFF) as u16;
+//                         output.write_u16::<BE>(sh)?;
+//                         length += 2;
+//                     } else if count <= 0x11 + 0xFF {
+//                         count -= 0x11;
+//                         debug_assert!((0..=0xFF).contains(&count));
+//                         let b = (count >> 4 & 0xFF) as u8;
+//                         let sh = ((count & 0xF) << 12) as u16 | disp.abs() as u16;
+//                         output.write_u8(b)?;
+//                         output.write_u16::<BE>(sh)?;
+//                         length += 3;
+//                     } else if count <= 0x111 + 0xFFFF {
+//                         count -= 0x111;
+//                         debug_assert!((0..=0xFFFF).contains(&count));
+//                         let l = (1 << 28) | (count << 12) | disp.abs() as u32;
+//                         output.write_u32::<BE>(l as _)?;
+//                         length += 4;
+//                     } else {
+//                         panic!();
+//                     }
+//                 }
+//                 CompressChunkType::Data(data) => {
+//                     output.write_u8(data)?;
+//                     length += 1;
+//                 }
+//             }
+//         }
+//     }
+//     let padding = if length % 4 == 0 { 0 } else { 4 - length % 4 };
+//     for _ in 0..padding {
+//         output.write_u8(0xFF)?;
+//     }
+
+//     Ok(())
+// }
 
 pub fn compress_arr(input: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     let mut result = Cursor::new(Vec::new());

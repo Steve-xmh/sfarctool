@@ -9,11 +9,11 @@ edition = "2021"
 lto = "fat"
 codegen-units = 1
 panic = "abort"
-opt-level = "s"
+opt-level = "z"
 debug = false
+strip = true
 
 [dependencies]
 zigarg = "1.1.0"
 byteorder = "1.4.3"
-nintendo-lz = "0.1.3"
 itertools = "0.10.3"
